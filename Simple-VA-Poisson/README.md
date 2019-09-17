@@ -64,8 +64,8 @@ Type objective_function<Type>::operator() ()
   PARAMETER_VECTOR(mu);
   PARAMETER_VECTOR(lambda_log);
   
-  Type sigma = exp(sigma_log);
-  vector<Type> lambda = exp(lambda_log);
+  Type const sigma = exp(sigma_log);
+  vector<Type> const lambda = exp(lambda_log);
   
   /* check args. The code currently crash with C++ exceptions though... */
   std::size_t const n = y.size(), n_groups = n / grp_size;
@@ -75,18 +75,17 @@ Type objective_function<Type>::operator() ()
     throw std::invalid_argument("invalid group size");
   
   /* compute lower bound */
-  Type lb = Type(0);
+  Type lb(0);
   {
-    Type const sigma_sq = sigma * sigma, 
-                   half(.5);
-    lb += Type(n_groups) * half * (1. - log(sigma_sq));
+    Type const sigma_sq = sigma * sigma;
+    lb += n_groups * .5 * (1. - log(sigma_sq));
     
     std::size_t j = 0;
     for(std::size_t i = 0; i < n_groups; ++i){
       Type const 
-        lambda_half = lambda[i] * half,
+        lambda_half = lambda[i] * .5,
                term = mu[i] + lambda_half;
-      lb += half * (log(lambda[i]) - (mu[i] * mu[i] + lambda[i]) / sigma_sq);
+      lb += .5 * (log(lambda[i]) - (mu[i] * mu[i] + lambda[i]) / sigma_sq);
       
       std::size_t const n_j = (i + 1) * grp_size;
       for(; j < n_j; ++j)
