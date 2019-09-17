@@ -1,0 +1,203 @@
+---
+title: "Simple Poisson Mixed Model"
+author: Benjamin Christoffersen
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  github_document: 
+    toc: true
+bibliography: ../ref.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE, cache = "./README-cache/", fig.path = "figures/README-", 
+  echo = TRUE)
+options(digits = 4, scipen = 7)
+.fig_height_small <- 4
+palette(c("#000000", "#009E73", "#e79f00", "#9ad0f3", "#0072B2", "#D55E00", 
+          "#CC79A7", "#F0E442"))
+```
+
+This directory contains an example of the Poisson mixed model described in
+@Ormerod2010.
+
+## Simulate Data
+We simulate data as follows
+
+```{r sim_dat}
+set.seed(42163306)
+dat_org <- within(list(), {
+  sigma <- 1.5      # std of random intercept term
+  beta <- c(2, 1.5) # intercept and slope
+  grp_size <- 5L    # number of individuals per group
+  n_groups <- 50L   # number of groups
+  
+  # simulate individual specific covariates and observed outcomes
+  x <- runif(grp_size * n_groups, -1, 1)
+  grp <- rep(1:n_groups, each = grp_size)
+  y <- rpois(grp_size * n_groups, lambda = exp(
+    beta[1] + beta[2] * x + rnorm(n_groups, sd = sigma)[grp]))
+})
+```
+
+We assume equal group sizes for simplicity.
+
+## Using TMB (CppAD)
+The following sections uses the `TMB` package which uses the `CppAD` C++ library
+to perform automatic differentiation. First, we compile the C++ file we need
+
+```{r cmp_tmb, message=FALSE, results='hide'}
+library(TMB)
+stopifnot(compile("PoisReg.cpp") == 0)
+dyn.load(dynlib("PoisReg"))
+```
+
+Here is the `PoisReg.cpp` file
+
+```{r show_cmp_tmb, engine="C++", code = readLines("PoisReg.cpp"), eval = FALSE}
+```
+
+### Two-Step Procedure
+We define a function which returns a function which optimizes a subset of the
+parameters. This will allow us to iterate between optimizing the variational 
+parameters and the model parameters. 
+
+```{r def_tmb_two_step}
+get_opt_func <- function(params_update, reltol = 1e-5){
+  eval(bquote(function(obj, verbose = FALSE){
+    # setup the objects we need
+    par_all <- obj$par
+    idx_update <- names(par_all) %in% .(params_update)
+    par <- par_all[idx_update]
+    fn <- obj$fn
+    gr <- obj$gr
+    
+    # setup functions we need
+    fn_use <- function(x, ...){
+      z <- par_all
+      z[idx_update] <- x
+      fn(z)
+    }
+    gr_use <- function(x, ...){
+      z <- par_all
+      z[idx_update] <- x
+      drop(gr(z))[idx_update]
+    }
+    
+    # optimize
+    opt_res <- optim(par, fn = fn_use, gr = gr_use, method = obj$method, 
+                     control = list(fnscale = -1, maxit = 1000L, 
+                                    reltol = .(reltol)))
+    if(opt_res$convergence > 0)
+      stop(sprintf("optim failed with code %d\n", opt_res$convergence))
+    obj$par[idx_update] <- opt_res$par
+    obj$value <- opt_res$value
+    
+    # print and return
+    if(verbose){
+      cat(sprintf("\nLower bound is %.4f. Parameters estimates are:\n", 
+                  obj$value))
+      print(obj$par[idx_update])
+    }
+    
+    obj
+  }))
+}
+```
+
+### Optimize with VA
+Next, we use the two-step procedure. First, we get an object which gives a 
+functions to evaluate the lower bound, the gradient of the lower bound, etc. 
+
+```{r tmb_setup_func}
+# starting values
+params <- with(dat_org, list(
+   sigma_log = 0,
+        beta = c(log(mean(y)), 0),
+          mu = rep(0, n_groups),
+  lambda_log = rep(0, n_groups)))
+
+# assign object with lower bound function, gradient, etc. 
+ad_func <- MakeADFun(
+  data = dat_org[c("y", "x", "grp_size")], parameters = params, DLL = "PoisReg",
+  silent = TRUE)
+```
+
+Then we use the two-step procedure
+
+```{r tmb_use_two_step}
+# assign function to perform two-step procedure
+optim_two_step <- function(obj, maxit = 1000L, eps = 1e-8, verbose = FALSE){
+  opt_variational <- get_opt_func(c("mu", "lambda_log"), reltol = eps)
+  opt_params <- get_opt_func(c("sigma_log", "beta"), reltol = eps)
+  
+  lbs <- rep(NA_real_, maxit)
+  lb_old <- -.Machine$double.xmax
+  for(i in 1:maxit){
+    obj <- opt_variational(obj, verbose = FALSE)
+    obj <- opt_params(obj, verbose = verbose && (i - 1L) %% 10 == 0)
+    
+    val <- obj$value
+    lbs[i] <- val
+    if(abs((val - lb_old) / lb_old) < eps)
+      break
+    lb_old <- val
+  
+  }
+  
+  obj$n_it <- i
+  obj$lbs <- lbs[1:i]
+  obj
+  
+}
+
+# optimize parameters
+two_est <- optim_two_step(ad_func)
+
+# plot of lower bound versus iteration index
+plot(two_est$lbs, xlab = "iteration", ylab = "lower bound", type = "l")
+
+# parameter estimates
+two_est$par[names(two_est$par) == "beta"]
+exp(two_est$par["sigma_log"])
+```
+
+We can compare this to optimizing over all parameters
+
+```{r tmb_opt_all}
+ad_func$control <- list(fnscale = -1, maxit = 1000L)
+one_est <- do.call(optim, ad_func)
+
+# compare results
+two_est$par[1:3] - one_est$par[1:3]
+```
+
+## Compare with Adaptive Gauss-Hermite Quadrature
+We can compare the result with using adaptive Gauss-Hermite quadrature
+
+```{r use_glmer}
+library(lme4)
+lme4_fit <- glmer(y ~ x + (1 | grp), dat_org, poisson(), nAGQ = 10)
+(lme4_fit_sum <- summary(lme4_fit))
+
+# compare log-likelihood and lower bound
+logLik(lme4_fit)
+one_est$value
+```
+
+We can compare the estimated standard errors
+
+```{r comp_std}
+# from VA
+local({
+  hess <- ad_func$he(one_est$par)
+  out <- sqrt(diag(solve(-hess)))
+  names(out) <- names(one_est$par)
+  out[1:3]
+})
+
+# standard errors for beta
+sqrt(diag(lme4_fit_sum$vcov)) # lme4 betas std
+```
+
+## References
