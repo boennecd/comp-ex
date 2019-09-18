@@ -1,23 +1,34 @@
 PackratFormat: 1.4
 PackratVersion: 0.5.0
-RVersion: 3.5.1
+RVersion: 3.6.0
 Repos: CRAN=https://cran.rstudio.com/
+
+Package: BH
+Source: CRAN
+Version: 1.69.0-1
+Hash: 15f597ed227897f4f793b6161260f4b9
 
 Package: Rcpp
 Source: CRAN
 Version: 1.0.2
 Hash: d04e441a8d398e3d3a71f294c07fa94d
 
+Package: RcppArmadillo
+Source: CRAN
+Version: 0.9.700.2.0
+Hash: cf1f09d40ca936ec38f890a9c78b1c07
+Requires: Rcpp
+
 Package: RcppEigen
 Source: CRAN
 Version: 0.3.3.5.0
-Hash: 5c644e0685d0737982a3d98b6b11c6bf
+Hash: 0abe558c252854b26620fe1b5e884ece
 Requires: Rcpp
 
 Package: TMB
 Source: CRAN
 Version: 1.7.15
-Hash: 9cf8e6d1c722d9f0d0a159fc64059844
+Hash: d62f0d7431dab5b9265411c3e15e4913
 Requires: RcppEigen
 
 Package: backports
@@ -64,7 +75,7 @@ Hash: 16aa2cc98d7b68c9d148c263c8dcdbcd
 Package: htmltools
 Source: CRAN
 Version: 0.3.6
-Hash: 4a0c306e40c3a86c22f87aaf9e639af5
+Hash: ef5869fcbca46a9551ce5b78954a6c2e
 Requires: Rcpp, digest
 
 Package: jsonlite
@@ -81,7 +92,7 @@ Requires: evaluate, highr, markdown, stringr, xfun, yaml
 Package: lme4
 Source: CRAN
 Version: 1.1-21
-Hash: 25fa3c3815e82e333215fa5aca729740
+Hash: e8951a6393bc19cd027ce47152bf41cf
 Requires: Rcpp, RcppEigen, minqa, nloptr
 
 Package: magrittr
@@ -103,7 +114,7 @@ Hash: 0d7563caf453c231b6f8c359c51eecc2
 Package: minqa
 Source: CRAN
 Version: 1.2.4
-Hash: dad9e531aea7eb7d863cfe7f81e9d72c
+Hash: c9365827edc36888b515b7a7d04bc2ee
 Requires: Rcpp
 
 Package: nloptr

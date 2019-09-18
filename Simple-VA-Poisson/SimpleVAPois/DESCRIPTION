@@ -1,0 +1,28 @@
+Package: SimpleVAPois
+Type: Package
+Title: What the Package Does (Title Case)
+Version: 0.1.0
+Authors@R: c(
+  person("Benjamin", "Christoffersen", 
+         email = "boennecd@gmail.com", 
+         role = c("cre", "aut")), 
+  person("Matthew", "Pulver", 
+         role = c("cph")),
+  person("Peter", "Dimov", 
+         role = c("cph")),
+  person("Bjørn", "Reese", 
+         role = c("cph")))
+Maintainer: The package maintainer <yourself@somewhere.net>
+Description: More about what it does (maybe more than one line)
+    Use four spaces when indenting paragraphs within the Description.
+License: BSL-1.0
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 6.1.1
+SystemRequirements: C++14
+LinkingTo: 
+    Rcpp,
+    RcppArmadillo, 
+    BH
+Imports: 
+    Rcpp

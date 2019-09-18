@@ -107,7 +107,8 @@ get_opt_func <- function(params_update, reltol = 1e-5){
 
 ### Optimize with VA
 Next, we use the two-step procedure. First, we get an object which gives a 
-functions to evaluate the lower bound, the gradient of the lower bound, etc. 
+function to evaluate the lower bound, 
+a function to evaluate the gradient of the lower bound, etc. 
 
 ```{r tmb_setup_func}
 # starting values
@@ -172,6 +173,59 @@ one_est <- do.call(optim, ad_func)
 two_est$par[1:3] - one_est$par[1:3]
 ```
 
+## Using boost autodiff
+We can also use the proposed boost library [`autodiff`](https://github.com/pulver/autodiff).
+An implementation is 
+available in the [SimpleVAPois](SimpleVAPois/) directory. In particular, see
+the [`SimpleVAPois/src/optim_boost.cpp`](SimpleVAPois/src/optim_boost.cpp) file
+which content is shown below
+
+```{r show_boost_autodiff, engine="C++", code = readLines(file.path("SimpleVAPois", "src", "optim_boost.cpp")), eval = FALSE}
+```
+
+We compare whether we get the same for the lower bound, gradient, and the 
+computation time below
+
+```{r autodiff}
+library(SimpleVAPois)
+
+local({
+  # output from tmb
+  lb_tmb <- ad_func$fn(ad_func$par)  
+  gr_tmb <- ad_func$gr(ad_func$par)
+  
+  # output using boost 
+  na <- names(ad_func$par)
+  f <- function()
+    SimpleVAPois::optim_VA_boost(
+      y = dat_org$y, x = dat_org$x, grp_size = dat_org$grp_size, order = 1L,
+      sigma_log  = ad_func$par["sigma_log"], 
+      beta       = ad_func$par[na == "beta"], 
+      lambda_log = ad_func$par[na == "lambda_log"], 
+      mu         = ad_func$par[na == "mu"])
+  autodiff_out <- f()
+  
+  # compare
+  cat(sprintf("Difference in lower bound is %f\n", 
+              lb_tmb - autodiff_out$lb))
+  cat(sprintf("Max abs difference between gradient elements are %.16f\n", 
+              max(abs(drop(autodiff_out$gr) - drop(gr_tmb)))))
+  
+  # end by comparing computation time
+  microbenchmark::microbenchmark(
+    `TMB (CppAd)` = ad_func$gr(ad_func$par), 
+    `boost autodiff` = f(), times = 100)
+})
+```
+
+I am not entirely why the two lower bounds differ (it has been suggested that 
+maybe it is the `dpois` function in `TMB`). 
+Admittedly, I have not spend a lot of time looking into the discrepancy. 
+Though, the gradients do match. The time comparison is not completely 
+fair as I e.g., take the exponential of the log random intercepts' standard 
+deviations the number of groups times with the boost `autodiff` implementation 
+and only once with the `TMB` implementation. 
+
 ## Compare with Adaptive Gauss-Hermite Quadrature
 We can compare the result with using adaptive Gauss-Hermite quadrature
 
@@ -196,8 +250,8 @@ local({
   out[1:3]
 })
 
-# standard errors for beta
-sqrt(diag(lme4_fit_sum$vcov)) # lme4 betas std
+# standard errors for beta from glmer
+sqrt(diag(lme4_fit_sum$vcov))
 ```
 
 ## References
