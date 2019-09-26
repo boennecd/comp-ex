@@ -1,0 +1,6 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^.*\.Rprofile$
+^README\.Rmd$
+^README/.*
+^README_cache/.*

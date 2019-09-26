@@ -1,0 +1,147 @@
+---
+title: "VA with CppAD for GSM"
+author: Benjamin Christoffersen
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE, cache = "./README-cache/", fig.path = "figures/README-", 
+  echo = TRUE)
+options(digits = 4, scipen = 7)
+.fig_height_small <- 4
+palette(c("#000000", "#009E73", "#e79f00", "#9ad0f3", "#0072B2", "#D55E00", 
+          "#CC79A7", "#F0E442"))
+```
+
+This package is made to 
+
+ - show implementations of Laplace approximations and Gaussian quadrature 
+   using `CppAD` through `TMB`. 
+ - show implementations of variational approximation in generalized survival 
+   models (GSM).
+ - how to use `TMB` to get extra operators for `CppAD` and make `CppAD` work 
+   with `Eigen`. 
+ - use `TMB` and `Rcpp` together and have multiple C++ functions which can  
+   be used for R without one function with a switch statement.
+   
+The latter may be advantageous later as we can work more solely in C++. You 
+can contrast the solution here with the discussion made in 
+[this post](https://github.com/kaskr/adcomp/issues/247#issuecomment-475002639).
+We start by using a temporary directory as our working directory throughout
+the rest of the code
+
+```{r set_dir}
+old_dir <- getwd()
+dir_use <- tempdir()
+knitr::opts_knit$set(root.dir = dir_use)
+```
+
+We also load a few libraries
+
+```{r load_lib}
+library(GSMVAEx)
+library(TMB)
+```
+
+## log-log GSM
+So far, we just compute the gradient of log-log GSM in `C++` and compare it 
+with using `TMB` from R. Here is the `loglogTMBEx.cpp` file which we will use
+in `R`
+
+```{r show_loglog_code, engine="C++", code = readLines("README/loglogTMBEx.cpp"), eval = FALSE}
+```
+
+We make a copy of the file in the temporary directory and compile the code.
+
+```{r cmp_loglog_code, cache = 1}
+file.copy(file.path(old_dir, "README", "loglogTMBEx.cpp"),
+          "loglogTMBEx.cpp")
+stopifnot(compile("loglogTMBEx.cpp") == 0)
+dyn.load(dynlib("loglogTMBEx"))
+```
+
+Then we have a bit of R code which we need in order to simulate the data
+and which we use in subsequent code (this is some code I received and there 
+seems to be a bug in it)
+
+```{r tmb_loglog_from_R, cache = 1, dependson = "cmp_loglog_code"}
+require(splines)
+set.seed(12345)
+x <- seq(0, 1, length=1e4)
+time <- rweibull(length(x), 1, exp(.1+0.1*x))
+censor <- runif(length(x), 0, 5)
+event <- time < censor
+tobs <- pmin(censor, time)
+formula <- ~ x + ns(log(tobs) , df = 1)
+
+getXD <- function(formula, data, newdata, time, eps = 1e-5) {
+    newdata[[time]] <- newdata[[time]] + eps
+    upper <- rstpm2:::predict.formula(formula, data, newdata)
+    newdata[[time]] <- newdata[[time]]-2*eps
+    (upper-rstpm2:::predict.formula(formula,data,newdata))/2/eps
+}
+
+# TODO: something seems to go wrong here? At least the dimension of beta 
+# which we assign later is incorrect in the original code
+X <- rstpm2:::predict.formula(
+  formula, data.frame(tobs = tobs[event], x = x[event]), data.frame(tobs, x))
+head(X) # why is there no `ns(log(tobs) , df = 1)` column?
+
+XD <- getXD(formula, data.frame(tobs = tobs[event], x = x[event]), 
+            data.frame(tobs, x), time = "tobs")
+
+MakeADFun <- function(...) {
+  newobj <- TMB::MakeADFun(...)
+  newobj$call <- match.call()
+  newobj
+}
+```
+
+Finally, we compare the computation of the gradient in C++ in this package 
+with the one using the `TMB` interface from `R`
+
+```{r comp_grads_loglog, cache = 1, dependson = "tmb_loglog_from_R"}
+local({
+  # assign functions to do the recording and compute the gradient
+  tmb <- function(){
+    f = MakeADFun(
+      data = list(X = X, XD = XD, tobs = tobs, event = as.double(event),
+                  eps = 1e-6, kappa = 1.0),
+      # TODO: original code
+      # parameters = list(beta = c(-5, 0, 1)), method = "nlminb",
+        parameters = list(beta = c(-5, 0   )), method = "nlminb",
+      DLL = "loglogTMBEx", silent = TRUE)
+    f$gr(c(-5, 0))
+  }
+  imp <- function()
+    GSMVAEx::loglog(tobs = tobs, event = as.double(event), XD = XD, X = X, 
+                    eps = 1e-6, kappa = 1.0, beta = c(-5, 0))
+  
+  # we get the same gradient
+  stopifnot(all.equal(drop(tmb()), drop(imp())))
+  
+  # the speed is the same
+  microbenchmark::microbenchmark(TBM = tmb(), Implementation = imp(), 
+                                 times = 100)
+})
+```
+
+Of course, one of the nice things about `MakeADFun` is that we do not have 
+to do the recording over and over again and save a lot of computation time. 
+We can similarly save a pointer to a C++ object in our implementation. 
+Finally, to make the point 
+that we can call multiple different C++ functions from R 
+then we make a call to the
+`hello_world_func` function in `src/R-interface.cpp` file shown below
+
+```{r show_r_interface, engine="C++", code = readLines("src/R-interface.cpp"), eval = FALSE}
+```
+
+here
+
+```{r hello_world}
+hello_world_func()
+```
+
