@@ -13,7 +13,9 @@ LazyData: true
 LinkingTo: 
     Rcpp,
     TMB,
-    RcppEigen
+    RcppEigen, 
+    nloptr (>= 1.2.0)
 Imports: 
-    Rcpp
+    Rcpp, 
+    nloptr (>= 1.2.0)
 RoxygenNote: 6.1.1

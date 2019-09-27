@@ -2,4 +2,7 @@
 
 export(hello_world_func)
 export(loglog)
+export(loglog_opt)
+import(Rcpp)
+import(nloptr)
 useDynLib(GSMVAEx, .registration = TRUE)

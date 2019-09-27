@@ -1,7 +1,7 @@
 VA with CppAD for GSM
 ================
 Benjamin Christoffersen
-26 September, 2019
+27 September, 2019
 
 This package is made to
 
@@ -67,14 +67,10 @@ Type objective_function<Type>::operator() ()
 We make a copy of the file in the temporary directory and compile the code.
 
 ``` r
-file.copy(file.path(old_dir, "README", "loglogTMBEx.cpp"),
-          "loglogTMBEx.cpp")
-```
-
-    ## [1] TRUE
-
-``` r
-stopifnot(compile("loglogTMBEx.cpp") == 0)
+stopifnot(
+  file.copy(file.path(old_dir, "README", "loglogTMBEx.cpp"),
+          "loglogTMBEx.cpp"),
+  compile("loglogTMBEx.cpp") == 0)
 ```
 
     ## Note: Using Makevars in /home/boennecd/.R/Makevars
@@ -100,46 +96,24 @@ event <- time < censor
 tobs <- pmin(censor, time)
 formula <- ~ x + ns(log(tobs) , df = 1)
 
-getXD <- function(formula, data, newdata, time, eps = 1e-5) {
-    newdata[[time]] <- newdata[[time]] + eps
-    upper <- rstpm2:::predict.formula(formula, data, newdata)
-    newdata[[time]] <- newdata[[time]]-2*eps
-    (upper-rstpm2:::predict.formula(formula,data,newdata))/2/eps
+# get the terms object we want
+trms_use <- local({
+  mf <- model.frame(formula, data.frame(tobs = tobs, x = x)[event, ])
+  terms(mf)
+})
+
+getXD <- function(trms, newdata, time, eps = 1e-5) {
+  stopifnot(inherits(trms, "terms"))
+  newdata[[time]] <- newdata[[time]] + eps
+  upper <- model.matrix(trms, newdata)
+  newdata[[time]] <- newdata[[time]] - eps
+  (upper - model.matrix(trms, newdata)) / 2 / eps
 }
 
-# TODO: something seems to go wrong here? At least the dimension of beta 
-# which we assign later is incorrect in the original code
-X <- rstpm2:::predict.formula(
-  formula, data.frame(tobs = tobs[event], x = x[event]), data.frame(tobs, x))
-```
+dat <- data.frame(tobs, x)
+X <- model.matrix(trms_use, data.frame(tobs, x))
+XD <- getXD(trms_use, dat, time = "tobs")
 
-    ## Warning in model.matrix.default(mt, mfnew, contrasts = contrasts): non-list
-    ## contrasts argument ignored
-
-``` r
-head(X) # why is there no `ns(log(tobs) , df = 1)` column?
-```
-
-    ##   (Intercept)         x
-    ## 1           1 0.0000000
-    ## 2           1 0.0001000
-    ## 3           1 0.0002000
-    ## 4           1 0.0003000
-    ## 5           1 0.0004000
-    ## 6           1 0.0005001
-
-``` r
-XD <- getXD(formula, data.frame(tobs = tobs[event], x = x[event]), 
-            data.frame(tobs, x), time = "tobs")
-```
-
-    ## Warning in model.matrix.default(mt, mfnew, contrasts = contrasts): non-list
-    ## contrasts argument ignored
-
-    ## Warning in model.matrix.default(mt, mfnew, contrasts = contrasts): non-list
-    ## contrasts argument ignored
-
-``` r
 MakeADFun <- function(...) {
   newobj <- TMB::MakeADFun(...)
   newobj$call <- match.call()
@@ -147,50 +121,100 @@ MakeADFun <- function(...) {
 }
 ```
 
-Finally, we compare the computation of the gradient in C++ in this package with the one using the `TMB` interface from `R`
+We compare the computation of the gradient in C++ in this package with the one using the `TMB` interface from `R`
 
 ``` r
 local({
   # assign functions to do the recording and compute the gradient
   tmb <- function(){
-    f = MakeADFun(
+    f <- MakeADFun(
       data = list(X = X, XD = XD, tobs = tobs, event = as.double(event),
                   eps = 1e-6, kappa = 1.0),
-      # TODO: original code
-      # parameters = list(beta = c(-5, 0, 1)), method = "nlminb",
-        parameters = list(beta = c(-5, 0   )), method = "nlminb",
+      parameters = list(beta = c(-5, 0, 1)), method = "nlminb",
       DLL = "loglogTMBEx", silent = TRUE)
-    f$gr(c(-5, 0))
+    
+    structure(f$gr(c(-5, 0, 1)), func = f)
   }
   imp <- function()
     GSMVAEx::loglog(tobs = tobs, event = as.double(event), XD = XD, X = X, 
-                    eps = 1e-6, kappa = 1.0, beta = c(-5, 0))
+                    eps = 1e-6, kappa = 1.0, beta = c(-5, 0, 1))
   
   # we get the same gradient
-  stopifnot(all.equal(drop(tmb()), drop(imp())))
+  stopifnot(isTRUE(all.equal(c(tmb()), c(imp()))))
   
-  # the speed is the same
-  microbenchmark::microbenchmark(TBM = tmb(), Implementation = imp(), 
-                                 times = 100)
+  cat("The computation time are comparable\n")
+  print(microbenchmark::microbenchmark(TBM = tmb(), Implementation = imp(), 
+                                       times = 100))
+  
+  cat("\nA large part is the \"tape recording\"\n")
+  f <- attr(tmb(), "func")
+  microbenchmark::microbenchmark(
+    `Full cost`          = tmb(),
+    `Non recording cost` = f$gr(c(-5, 0, 1)), times = 100)
 })
 ```
 
+    ## The computation time are comparable
     ## Unit: milliseconds
-    ##            expr   min    lq  mean median    uq    max neval
-    ##             TBM 7.805 8.237 9.507  8.373 8.686 99.754   100
-    ##  Implementation 4.656 4.921 5.235  5.122 5.356  8.082   100
+    ##            expr   min    lq  mean median    uq   max neval
+    ##             TBM 14.58 15.10 16.33  15.43 15.82 90.66   100
+    ##  Implementation 10.94 11.44 12.21  11.93 12.55 23.39   100
+    ## 
+    ## A large part is the "tape recording"
 
-Of course, one of the nice things about `MakeADFun` is that we do not have to do the recording over and over again and save a lot of computation time. We can similarly save a pointer to a C++ object in our implementation. Finally, to make the point that we can call multiple different C++ functions from R then we make a call to the `hello_world_func` function in `src/R-interface.cpp` file shown below
+    ## Unit: milliseconds
+    ##                expr    min     lq   mean median     uq    max neval
+    ##           Full cost 14.690 15.034 16.121 15.318 15.678 86.323   100
+    ##  Non recording cost  1.562  1.596  1.645  1.628  1.672  2.035   100
+
+Of course, one of the nice things about `MakeADFun` is that we do not have to do the recording over and over again and save a lot of computation time. We can similarly save a pointer to a C++ object in our implementation.
+
+### Optimization in C++
+
+We can also compare computation of the parameters. This is done in the C++ code using the `nlopt` library through the `nloptr` package
+
+``` r
+local({
+  # assign functions to do the recording and compute the gradient
+  tmb <- function(){
+    f <- MakeADFun(
+      data = list(X = X, XD = XD, tobs = tobs, event = as.double(event),
+                  eps = 1e-6, kappa = 1.0),
+        parameters = list(beta = c(-5, 0, 1)), method = "nlminb",
+      DLL = "loglogTMBEx", silent = TRUE)
+    opt <- optim(c(-5, 0, 1), fn = f$fn, gr = f$gr)
+    opt[c("par", "value")]
+  }
+  imp <- function()
+    GSMVAEx::loglog_opt(
+      tobs = tobs, event = as.double(event), XD = XD, X = X, eps = 1e-6, 
+      kappa = 1.0, beta = c(-5, 0, 1))
+  
+  # we get the same result
+  stopifnot(isTRUE(all.equal(tmb(), imp(), tolerance = 1e-4)))
+  
+  cat("The computation time are comparable\n")
+  microbenchmark::microbenchmark(TBM = tmb(), Implementation = imp(), 
+                                 times = 10)
+})
+```
+
+    ## The computation time are comparable
+
+    ## Unit: milliseconds
+    ##            expr   min    lq  mean median     uq    max neval
+    ##             TBM 95.69 96.30 98.44  98.91 100.27 101.35    10
+    ##  Implementation 66.19 66.73 67.11  67.09  67.48  68.48    10
+
+Finally, notice that we have called more than one C++ function form R from
+the `src/R-interface.cpp` file shown below
 
 ``` cpp
 #include <RcppEigen.h>
 #include "log-log-ex.h"
 
-//' @export
-//[[Rcpp::export]]
-void hello_world_func(){
-  Rcpp::Rcout << "Hello world\n";
-}
+using Rcpp::List;
+using Rcpp::Named;
 
 //' @export
 //[[Rcpp::export]]
@@ -199,12 +223,16 @@ Eigen::MatrixXd loglog
    double const eps, double const kappa, SEXP beta){
   return loglog_grad(tobs, event, X, XD, eps, kappa, beta);
 }
+
+//' @export
+//[[Rcpp::export]]
+List loglog_opt
+  (SEXP tobs, SEXP event, SEXP X, SEXP XD,
+   double const eps, double const kappa, SEXP beta){
+  auto out = loglog_optim(tobs, event, X, XD, eps, kappa, beta);
+
+  return List::create(
+    Named("par")   = out.par,
+    Named("value") = out.value);
+}
 ```
-
-here
-
-``` r
-hello_world_func()
-```
-
-    ## Hello world

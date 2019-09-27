@@ -11,3 +11,8 @@ loglog <- function(tobs, event, X, XD, eps, kappa, beta) {
     .Call(`_GSMVAEx_loglog`, tobs, event, X, XD, eps, kappa, beta)
 }
 
+#' @export
+loglog_opt <- function(tobs, event, X, XD, eps, kappa, beta) {
+    .Call(`_GSMVAEx_loglog_opt`, tobs, event, X, XD, eps, kappa, beta)
+}
+

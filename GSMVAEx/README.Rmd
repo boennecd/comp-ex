@@ -56,9 +56,10 @@ in `R`
 We make a copy of the file in the temporary directory and compile the code.
 
 ```{r cmp_loglog_code, cache = 1}
-file.copy(file.path(old_dir, "README", "loglogTMBEx.cpp"),
-          "loglogTMBEx.cpp")
-stopifnot(compile("loglogTMBEx.cpp") == 0)
+stopifnot(
+  file.copy(file.path(old_dir, "README", "loglogTMBEx.cpp"),
+          "loglogTMBEx.cpp"),
+  compile("loglogTMBEx.cpp") == 0)
 dyn.load(dynlib("loglogTMBEx"))
 ```
 
@@ -76,21 +77,23 @@ event <- time < censor
 tobs <- pmin(censor, time)
 formula <- ~ x + ns(log(tobs) , df = 1)
 
-getXD <- function(formula, data, newdata, time, eps = 1e-5) {
-    newdata[[time]] <- newdata[[time]] + eps
-    upper <- rstpm2:::predict.formula(formula, data, newdata)
-    newdata[[time]] <- newdata[[time]]-2*eps
-    (upper-rstpm2:::predict.formula(formula,data,newdata))/2/eps
+# get the terms object we want
+trms_use <- local({
+  mf <- model.frame(formula, data.frame(tobs = tobs, x = x)[event, ])
+  terms(mf)
+})
+
+getXD <- function(trms, newdata, time, eps = 1e-5) {
+  stopifnot(inherits(trms, "terms"))
+  newdata[[time]] <- newdata[[time]] + eps
+  upper <- model.matrix(trms, newdata)
+  newdata[[time]] <- newdata[[time]] - eps
+  (upper - model.matrix(trms, newdata)) / 2 / eps
 }
 
-# TODO: something seems to go wrong here? At least the dimension of beta 
-# which we assign later is incorrect in the original code
-X <- rstpm2:::predict.formula(
-  formula, data.frame(tobs = tobs[event], x = x[event]), data.frame(tobs, x))
-head(X) # why is there no `ns(log(tobs) , df = 1)` column?
-
-XD <- getXD(formula, data.frame(tobs = tobs[event], x = x[event]), 
-            data.frame(tobs, x), time = "tobs")
+dat <- data.frame(tobs, x)
+X <- model.matrix(trms_use, data.frame(tobs, x))
+XD <- getXD(trms_use, dat, time = "tobs")
 
 MakeADFun <- function(...) {
   newobj <- TMB::MakeADFun(...)
@@ -99,49 +102,77 @@ MakeADFun <- function(...) {
 }
 ```
 
-Finally, we compare the computation of the gradient in C++ in this package 
+We compare the computation of the gradient in C++ in this package 
 with the one using the `TMB` interface from `R`
 
 ```{r comp_grads_loglog, cache = 1, dependson = "tmb_loglog_from_R"}
 local({
   # assign functions to do the recording and compute the gradient
   tmb <- function(){
-    f = MakeADFun(
+    f <- MakeADFun(
       data = list(X = X, XD = XD, tobs = tobs, event = as.double(event),
                   eps = 1e-6, kappa = 1.0),
-      # TODO: original code
-      # parameters = list(beta = c(-5, 0, 1)), method = "nlminb",
-        parameters = list(beta = c(-5, 0   )), method = "nlminb",
+      parameters = list(beta = c(-5, 0, 1)), method = "nlminb",
       DLL = "loglogTMBEx", silent = TRUE)
-    f$gr(c(-5, 0))
+    
+    structure(f$gr(c(-5, 0, 1)), func = f)
   }
   imp <- function()
     GSMVAEx::loglog(tobs = tobs, event = as.double(event), XD = XD, X = X, 
-                    eps = 1e-6, kappa = 1.0, beta = c(-5, 0))
+                    eps = 1e-6, kappa = 1.0, beta = c(-5, 0, 1))
   
   # we get the same gradient
-  stopifnot(all.equal(drop(tmb()), drop(imp())))
+  stopifnot(isTRUE(all.equal(c(tmb()), c(imp()))))
   
-  # the speed is the same
-  microbenchmark::microbenchmark(TBM = tmb(), Implementation = imp(), 
-                                 times = 100)
+  cat("The computation time are comparable\n")
+  print(microbenchmark::microbenchmark(TBM = tmb(), Implementation = imp(), 
+                                       times = 100))
+  
+  cat("\nA large part is the \"tape recording\"\n")
+  f <- attr(tmb(), "func")
+  microbenchmark::microbenchmark(
+    `Full cost`          = tmb(),
+    `Non recording cost` = f$gr(c(-5, 0, 1)), times = 100)
 })
 ```
 
 Of course, one of the nice things about `MakeADFun` is that we do not have 
 to do the recording over and over again and save a lot of computation time. 
 We can similarly save a pointer to a C++ object in our implementation. 
-Finally, to make the point 
-that we can call multiple different C++ functions from R 
-then we make a call to the
-`hello_world_func` function in `src/R-interface.cpp` file shown below
+
+### Optimization in C++
+
+We can also compare computation of the parameters. This is done in the C++
+code using the `nlopt` library through the `nloptr` package
+
+```{r show_parameter_estimation, cache = 1, dependson = "tmb_loglog_from_R"}
+local({
+  # assign functions to do the recording and compute the gradient
+  tmb <- function(){
+    f <- MakeADFun(
+      data = list(X = X, XD = XD, tobs = tobs, event = as.double(event),
+                  eps = 1e-6, kappa = 1.0),
+        parameters = list(beta = c(-5, 0, 1)), method = "nlminb",
+      DLL = "loglogTMBEx", silent = TRUE)
+    opt <- optim(c(-5, 0, 1), fn = f$fn, gr = f$gr)
+    opt[c("par", "value")]
+  }
+  imp <- function()
+    GSMVAEx::loglog_opt(
+      tobs = tobs, event = as.double(event), XD = XD, X = X, eps = 1e-6, 
+      kappa = 1.0, beta = c(-5, 0, 1))
+  
+  # we get the same result
+  stopifnot(isTRUE(all.equal(tmb(), imp(), tolerance = 1e-4)))
+  
+  cat("The computation time are comparable\n")
+  microbenchmark::microbenchmark(TBM = tmb(), Implementation = imp(), 
+                                 times = 10)
+})
+```
+
+Finally, notice that we have called more than one C++ function from R from  
+the `src/R-interface.cpp` file shown below
 
 ```{r show_r_interface, engine="C++", code = readLines("src/R-interface.cpp"), eval = FALSE}
 ```
-
-here
-
-```{r hello_world}
-hello_world_func()
-```
-

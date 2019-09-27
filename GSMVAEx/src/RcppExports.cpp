@@ -32,10 +32,28 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// loglog_opt
+Rcpp::List loglog_opt(SEXP tobs, SEXP event, SEXP X, SEXP XD, double const eps, double const kappa, SEXP beta);
+RcppExport SEXP _GSMVAEx_loglog_opt(SEXP tobsSEXP, SEXP eventSEXP, SEXP XSEXP, SEXP XDSEXP, SEXP epsSEXP, SEXP kappaSEXP, SEXP betaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type tobs(tobsSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type event(eventSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type X(XSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type XD(XDSEXP);
+    Rcpp::traits::input_parameter< double const >::type eps(epsSEXP);
+    Rcpp::traits::input_parameter< double const >::type kappa(kappaSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type beta(betaSEXP);
+    rcpp_result_gen = Rcpp::wrap(loglog_opt(tobs, event, X, XD, eps, kappa, beta));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_GSMVAEx_hello_world_func", (DL_FUNC) &_GSMVAEx_hello_world_func, 0},
     {"_GSMVAEx_loglog", (DL_FUNC) &_GSMVAEx_loglog, 7},
+    {"_GSMVAEx_loglog_opt", (DL_FUNC) &_GSMVAEx_loglog_opt, 7},
     {NULL, NULL, 0}
 };
 

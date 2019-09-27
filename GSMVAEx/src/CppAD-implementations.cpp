@@ -1,4 +1,5 @@
 #include "TMB-wrap.h"
+#include "pkg_utils.h"
 
 /* we have to declare this somewhere */
 template<class Type>
@@ -11,6 +12,7 @@ Type objective_function<Type>::operator() ()
 #include "log-log-ex.h"
 
 using AD_dub = AD<double>;
+using std::size_t;
 
 #define DAT_MAT(NAME)                                           \
 NAME(asMatrix<AD_dub>(NAME))
@@ -60,9 +62,11 @@ public:
      * It is an Eigen matrix. I have not used that library much so I need to
      * check */
     for(unsigned i = 0; i < tobs.size(); ++i) {
-      nlogl[0] -= event[i] * log_eps - H[i];
-      if(h[i] < eps)
-        nlogl[0] += h[i] * h[i] * kappa;
+      if (h(i) < eps)
+        nlogl[0] -= event[i] * log_eps - H[i] + h[i] * h[i] * kappa;
+      else
+        nlogl[0] -= event[i] * log(h[i]) - H[i];
+
     }
 
     ADFun<double> func(beta, nlogl);
@@ -83,5 +87,26 @@ Eigen::Array<double, Eigen::Dynamic, 1> loglog_grad
 
   /* TODO: I think there is a copy here and that can this copy be avoided? */
   vector<double> beta_plain(asVector<double>(beta_in));
+
   return func.Jacobian(beta_plain);
+}
+
+loglog_optim_return loglog_optim
+  (SEXP tobs, SEXP event, SEXP X, SEXP XD,
+   double const eps, double const kappa, SEXP beta_in){
+  loglog_inner_worker worker(tobs, event, X, XD, eps, kappa);
+
+  vector<AD_dub> beta(asVector<AD_dub>(beta_in));
+  ADFun<double> func = worker.get_func(beta);
+
+  auto optim_vals = pkg_utils::optim(func, beta);
+  std::size_t const n = beta.size();
+  Eigen::Array<double, Eigen::Dynamic, 1> out(n);
+  {
+    double *x = optim_vals.par.get();
+    for(unsigned i = 0; i < n; ++i)
+      out[i] = *x++;
+  }
+
+  return { optim_vals.value, std::move(out) };
 }
